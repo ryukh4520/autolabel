@@ -86,16 +86,3 @@ sam-auto-labeler/
 3 0.498 0.734 0.198 0.356    # pants
 4 0.445 0.923 0.067 0.089    # boots (left)
 ```
-
-## 개발 계획
-
-자세한 개발 계획은 `plan_n_process/plan.md`를 참조하세요.
-
-## 하드웨어 요구사항
-
-- GPU: RTX 3070 (8GB VRAM) 이상
-- RAM: 16GB 이상 권장
-
-## 라이선스
-
-MIT License
