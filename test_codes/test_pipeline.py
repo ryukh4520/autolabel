@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-통합 파이프라인 테스트 스크립트
+통합 파이프라인 테스트 스크립트 (동영상 버전)
 
 전체 자동 라벨링 파이프라인을 테스트:
 1. AutoLabeler 초기화
-2. 단일 이미지 처리
-3. 결과 확인
-4. 간단한 시각화
+2. 동영상에서 300 프레임마다 샘플링
+3. 각 프레임 처리 및 시각화
 """
 
 import sys
@@ -14,6 +13,7 @@ import os
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 # 프로젝트 경로 추가
 sys.path.insert(0, '/workspace')
@@ -57,7 +57,7 @@ def show_masks_samhq(ax, masks, image_rgb):
     ax.imshow(mask_image)
 
 
-def visualize_result(result, output_path, all_masks=None):
+def visualize_result(result, output_path, all_masks=None, frame_num=0):
     """
     결과 시각화 (개선된 버전)
     
@@ -65,6 +65,7 @@ def visualize_result(result, output_path, all_masks=None):
         result: 파이프라인 결과
         output_path: 저장 경로
         all_masks: SAM-HQ 전체 마스크 (필터링 전)
+        frame_num: 프레임 번호
     """
     image_path = result['image_path']
     labeled_masks = result['labeled_masks']
@@ -79,12 +80,12 @@ def visualize_result(result, output_path, all_masks=None):
     
     # ========== (0, 0) 원본 이미지 ==========
     axes[0, 0].imshow(image_rgb)
-    axes[0, 0].set_title('Step 1: Original Image', fontsize=18, fontweight='bold')
+    axes[0, 0].set_title(f'Step 1: Original Image (Frame {frame_num})', fontsize=18, fontweight='bold')
     axes[0, 0].axis('off')
     
     # 이미지 정보 텍스트
     h, w = image_rgb.shape[:2]
-    axes[0, 0].text(10, 30, f'Size: {w}x{h}', 
+    axes[0, 0].text(10, 30, f'Size: {w}x{h}\nFrame: {frame_num}', 
                    fontsize=14, color='white', 
                    bbox=dict(boxstyle='round', facecolor='black', alpha=0.7))
     
@@ -218,7 +219,7 @@ def visualize_result(result, output_path, all_masks=None):
     stats = result['statistics']
     time_stats = result['processing_time']
     
-    title_text = f"Auto-Labeling Pipeline Result | "
+    title_text = f"Auto-Labeling Pipeline Result (Frame {frame_num}) | "
     title_text += f"Total Time: {time_stats.get('total', 0):.2f}s | "
     title_text += f"Labels: {len(stats['by_label'])} types"
     
@@ -232,43 +233,161 @@ def visualize_result(result, output_path, all_masks=None):
     print(f"[INFO] Visualization saved: {output_path}")
 
 
+def process_video(video_path, labeler, output_dir, frame_interval=300):
+    """
+    동영상 처리
+    
+    Args:
+        video_path: 입력 동영상 경로
+        labeler: AutoLabeler 인스턴스
+        output_dir: 출력 디렉토리
+        frame_interval: 프레임 샘플링 간격
+    """
+    # 동영상 열기
+    cap = cv2.VideoCapture(video_path)
+    
+    if not cap.isOpened():
+        print(f"[ERROR] Failed to open video: {video_path}")
+        return
+    
+    # 동영상 정보
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    print(f"\n[INFO] Video Information:")
+    print(f"       - Total frames: {total_frames}")
+    print(f"       - FPS: {fps:.2f}")
+    print(f"       - Resolution: {width}x{height}")
+    print(f"       - Sampling interval: {frame_interval} frames")
+    print(f"       - Expected samples: {total_frames // frame_interval}")
+    
+    # 프레임 처리
+    frame_count = 0
+    processed_count = 0
+    
+    # 임시 프레임 저장 디렉토리
+    temp_dir = os.path.join(output_dir, 'temp_frames')
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    while True:
+        ret, frame = cap.read()
+        
+        if not ret:
+            break
+        
+        # 샘플링 간격마다 처리
+        if frame_count % frame_interval == 0:
+            print(f"\n{'='*80}")
+            print(f"Processing Frame {frame_count}/{total_frames}")
+            print(f"{'='*80}")
+            
+            # 프레임 저장
+            temp_frame_path = os.path.join(temp_dir, f'frame_{frame_count:06d}.jpg')
+            cv2.imwrite(temp_frame_path, frame)
+            
+            try:
+                # 이미지 로드 (SAM-HQ 전체 마스크를 얻기 위해)
+                image = labeler.load_image(temp_frame_path)
+                
+                # SAM-HQ 전체 마스크 생성 (필터링 전)
+                all_masks = labeler.sam_segmenter.generate_masks(image)
+                
+                # 이미지 처리
+                result = labeler.process_image(temp_frame_path, verbose=True)
+                
+                # 결과 시각화 (전체 마스크 포함)
+                output_path = os.path.join(output_dir, f'frame_{frame_count:06d}_result.png')
+                visualize_result(result, output_path, all_masks=all_masks, frame_num=frame_count)
+                
+                processed_count += 1
+                
+            except Exception as e:
+                print(f"[ERROR] Failed to process frame {frame_count}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        frame_count += 1
+    
+    cap.release()
+    
+    print(f"\n{'='*80}")
+    print(f"Video Processing Complete!")
+    print(f"{'='*80}")
+    print(f"Total frames: {frame_count}")
+    print(f"Processed frames: {processed_count}")
+    print(f"Output directory: {output_dir}")
+
+
 def main():
     """메인 함수"""
     print("=" * 80)
-    print("Integrated Pipeline Test")
+    print("Integrated Pipeline Test (Video Version)")
     print("=" * 80)
     
-    # 테스트 이미지
-    test_image = "/workspace/test_codes/source/test_image.jpg"
+    # 테스트 동영상 경로
+    video_path = "/workspace/test_codes/source/test_video.mp4"
     
-    if not os.path.exists(test_image):
-        print(f"[ERROR] Test image not found: {test_image}")
-        sys.exit(1)
+    # 동영상이 없으면 이미지 모드로 폴백
+    if not os.path.exists(video_path):
+        print(f"[WARNING] Video not found: {video_path}")
+        print(f"[INFO] Falling back to image mode...")
+        
+        test_image = "/workspace/test_codes/source/test_image.jpg"
+        
+        if not os.path.exists(test_image):
+            print(f"[ERROR] Test image not found: {test_image}")
+            sys.exit(1)
+        
+        # 출력 디렉토리
+        output_dir = "/workspace/test_codes/result_pipeline"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # AutoLabeler 초기화
+        print("\n[INFO] Initializing AutoLabeler...")
+        labeler = AutoLabeler()
+        
+        # 이미지 로드 (SAM-HQ 전체 마스크를 얻기 위해)
+        print("\n[INFO] Loading image...")
+        image = labeler.load_image(test_image)
+        
+        # SAM-HQ 전체 마스크 생성 (필터링 전)
+        print("\n[INFO] Generating SAM-HQ masks...")
+        all_masks = labeler.sam_segmenter.generate_masks(image)
+        
+        # 이미지 처리
+        print("\n[INFO] Processing image...")
+        result = labeler.process_image(test_image, verbose=True)
+        
+        # 결과 시각화 (전체 마스크 포함)
+        print("\n[INFO] Generating visualization...")
+        output_path = os.path.join(output_dir, 'pipeline_result.png')
+        visualize_result(result, output_path, all_masks=all_masks, frame_num=0)
+        
+        # VRAM 사용량
+        vram = labeler.get_vram_usage()
+        if vram:
+            print(f"\n[INFO] VRAM Usage:")
+            print(f"       - Allocated: {vram['allocated']:.2f} GB")
+            print(f"       - Reserved: {vram['reserved']:.2f} GB")
+        
+        print("\n" + "=" * 80)
+        print("✓ Pipeline Test Complete!")
+        print("=" * 80)
+        return
     
     # 출력 디렉토리
-    output_dir = "/workspace/test_codes/result_pipeline"
+    output_dir = "/workspace/test_codes/result_pipeline_video"
     os.makedirs(output_dir, exist_ok=True)
     
     # AutoLabeler 초기화
     print("\n[INFO] Initializing AutoLabeler...")
     labeler = AutoLabeler()
     
-    # 이미지 로드 (SAM-HQ 전체 마스크를 얻기 위해)
-    print("\n[INFO] Loading image...")
-    image = labeler.load_image(test_image)
-    
-    # SAM-HQ 전체 마스크 생성 (필터링 전)
-    print("\n[INFO] Generating SAM-HQ masks...")
-    all_masks = labeler.sam_segmenter.generate_masks(image)
-    
-    # 이미지 처리
-    print("\n[INFO] Processing image...")
-    result = labeler.process_image(test_image, verbose=True)
-    
-    # 결과 시각화 (전체 마스크 포함)
-    print("\n[INFO] Generating visualization...")
-    output_path = os.path.join(output_dir, 'pipeline_result.png')
-    visualize_result(result, output_path, all_masks=all_masks)
+    # 동영상 처리
+    print("\n[INFO] Processing video...")
+    process_video(video_path, labeler, output_dir, frame_interval=300)
     
     # VRAM 사용량
     vram = labeler.get_vram_usage()
