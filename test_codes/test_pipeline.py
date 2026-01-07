@@ -21,14 +21,17 @@ sys.path.insert(0, '/workspace')
 from src.auto_labeler import AutoLabeler
 
 
-# 라벨별 색상 정의
+# 라벨별 색상 정의 (8개 클래스)
 LABEL_COLORS = {
-    'helmet': [255, 0, 0],      # 빨강
-    'gloves': [0, 255, 0],      # 초록
-    'upper_body': [0, 0, 255],  # 파랑
-    'pants': [255, 255, 0],     # 노랑
-    'boots': [255, 0, 255],     # 마젠타
-    'unknown': [128, 128, 128]  # 회색
+    'head_cover': [255, 100, 100],    # 연한 빨강
+    'goggles': [100, 200, 255],       # 하늘색
+    'mask': [255, 200, 100],          # 주황색
+    'upper_body': [100, 255, 100],    # 연한 초록
+    'pants': [255, 255, 100],         # 노랑
+    'gloves': [200, 100, 255],        # 보라
+    'arm_covers': [100, 255, 255],    # 청록
+    'shoe_covers': [255, 100, 200],   # 분홍
+    'unknown': [128, 128, 128]        # 회색
 }
 
 
@@ -107,12 +110,17 @@ def visualize_result(result, output_path, all_masks=None):
         # 신체 영역 표시
         body_regions = person_info.get('body_regions', {})
         region_colors = {
-            'head_region': 'red',
-            'left_hand_region': 'blue',
-            'right_hand_region': 'cyan',
-            'torso_region': 'green',
+            'head_cover_region': 'red',
+            'goggles_region': 'cyan',
+            'mask_region': 'orange',
+            'upper_body_region': 'green',
             'pants_region': 'yellow',
-            'boots_region': 'magenta'
+            'left_glove_region': 'blue',
+            'right_glove_region': 'blue',
+            'left_arm_cover_region': 'purple',
+            'right_arm_cover_region': 'purple',
+            'left_shoe_cover_region': 'magenta',
+            'right_shoe_cover_region': 'magenta'
         }
         
         for region_name, region_data in body_regions.items():
@@ -122,7 +130,7 @@ def visualize_result(result, output_path, all_masks=None):
             color = region_colors.get(region_name, 'white')
             
             # 원형 영역 (장갑)
-            if 'hand' in region_name:
+            if 'glove' in region_name:
                 x, y, radius = region_data
                 circle = plt.Circle((x, y), radius, 
                                   fill=False, edgecolor=color, 

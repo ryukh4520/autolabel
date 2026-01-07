@@ -1,14 +1,14 @@
 # Model settings
 sam:
-  model_type: "sam2_hiera_large"
-  checkpoint: "/workspace/models/sam2_hiera_large.pt"
+  model_type: "sam_hq_vit_l"
+  checkpoint: "/workspace/models/sam_hq_vit_l.pth"
   device: "cuda"
   points_per_side: 32  # Grid points for automatic mask generation
   pred_iou_thresh: 0.88  # Mask quality threshold
   stability_score_thresh: 0.95  # Stability threshold
   
 pose:
-  model: "/workspace/models/yolov8m-pose.pt"
+  checkpoint: "/workspace/models/yolov8m-pose.pt"
   device: "cuda"
   conf_threshold: 0.5  # Confidence threshold for person detection
   iou_threshold: 0.7   # NMS IoU threshold
@@ -22,17 +22,20 @@ mask_filter:
 # Keypoint mapping thresholds
 mapping:
   head_offset_ratio: 0.15  # Ratio above nose for helmet detection
-  hand_radius: 60          # Pixel radius around wrist for gloves
+  hand_radius: 150         # Pixel radius around wrist for gloves (increased)
   torso_expand_ratio: 0.1  # Expansion ratio for torso region
-  ankle_offset: 30         # Pixel offset below ankle for boots
+  ankle_offset: 50         # Pixel offset below ankle for shoe covers (increased)
   
-# Equipment labels
+# Equipment labels (8 classes)
 labels:
-  helmet: 0
-  gloves: 1
-  upper_body: 2
-  pants: 3
-  boots: 4
+  head_cover: 0      # 두건 복면 (머리~어깨)
+  goggles: 1         # 보안경 (눈 영역)
+  mask: 2            # 마스크 (코/입 영역)
+  upper_body: 3      # 흰색 작업복 상의
+  pants: 4           # 흰색 작업복 하의
+  gloves: 5          # 위생 장갑 (손목~손)
+  arm_covers: 6      # 위생 토시 (팔뚝)
+  shoe_covers: 7     # 위생 신발 커버 (발목~발)
 
 # Output settings
 output:

@@ -122,7 +122,7 @@ class PoseEstimator:
     
     def get_body_regions(self, keypoints, image_shape):
         """
-        키포인트로부터 신체 영역 계산
+        키포인트로부터 신체 영역 계산 (8개 클래스)
         
         Args:
             keypoints (np.ndarray): [17, 3] 키포인트 배열
@@ -131,50 +131,186 @@ class PoseEstimator:
         Returns:
             dict: 신체 영역 정보
                 {
-                    'head_region': [x1, y1, x2, y2],
-                    'left_hand_region': [x, y, radius],
-                    'right_hand_region': [x, y, radius],
-                    'torso_region': [x1, y1, x2, y2],
-                    'pants_region': [x1, y1, x2, y2],
-                    'boots_region': [x1, y1, x2, y2]
+                    'head_cover_region': [x1, y1, x2, y2],  # 두건 복면 (머리~어깨)
+                    'goggles_region': [x1, y1, x2, y2],     # 보안경 (눈 영역)
+                    'mask_region': [x1, y1, x2, y2],        # 마스크 (코/입 영역)
+                    'upper_body_region': [x1, y1, x2, y2],  # 상의 (어깨~엉덩이)
+                    'pants_region': [x1, y1, x2, y2],       # 하의 (엉덩이~발목)
+                    'left_glove_region': [x, y, radius],    # 왼손 장갑
+                    'right_glove_region': [x, y, radius],   # 오른손 장갑
+                    'left_arm_cover_region': [x1, y1, x2, y2],  # 왼팔 토시
+                    'right_arm_cover_region': [x1, y1, x2, y2], # 오른팔 토시
+                    'left_shoe_cover_region': [x1, y1, x2, y2], # 왼발 신발커버
+                    'right_shoe_cover_region': [x1, y1, x2, y2] # 오른발 신발커버
                 }
         """
         height, width = image_shape[:2]
         regions = {}
         
-        # 1. 헬멧 영역 (머리 위쪽)
-        regions['head_region'] = self._calculate_head_region(keypoints, height, width)
+        # 1. 두건 복면 (머리 전체 ~ 어깨)
+        regions['head_cover_region'] = self._calculate_head_cover_region(keypoints, height, width)
         
-        # 2. 장갑 영역 (손목 주변)
-        regions['left_hand_region'] = self._calculate_hand_region(keypoints, 9)  # left wrist
-        regions['right_hand_region'] = self._calculate_hand_region(keypoints, 10)  # right wrist
+        # 2. 보안경 (눈 영역)
+        regions['goggles_region'] = self._calculate_goggles_region(keypoints, height, width)
         
-        # 3. 상의 영역 (어깨-엉덩이)
-        regions['torso_region'] = self._calculate_torso_region(keypoints, width)
+        # 3. 마스크 (코/입 영역)
+        regions['mask_region'] = self._calculate_mask_region(keypoints, height, width)
         
-        # 4. 하의 영역 (엉덩이-발목)
+        # 4. 상의 (어깨 ~ 엉덩이)
+        regions['upper_body_region'] = self._calculate_torso_region(keypoints, width)
+        
+        # 5. 하의 (엉덩이 ~ 발목)
         regions['pants_region'] = self._calculate_pants_region(keypoints, width)
         
-        # 5. 신발 영역 (발목 아래)
-        regions['boots_region'] = self._calculate_boots_region(keypoints, height, width)
+        # 6. 장갑 (손목 주변)
+        regions['left_glove_region'] = self._calculate_hand_region(keypoints, 9)   # left wrist
+        regions['right_glove_region'] = self._calculate_hand_region(keypoints, 10)  # right wrist
+        
+        # 7. 토시 (팔꿈치 ~ 손목)
+        regions['left_arm_cover_region'] = self._calculate_arm_cover_region(keypoints, 'left', width)
+        regions['right_arm_cover_region'] = self._calculate_arm_cover_region(keypoints, 'right', width)
+        
+        # 8. 신발 커버 (발목 아래)
+        regions['left_shoe_cover_region'] = self._calculate_shoe_cover_region(keypoints, 'left', height, width)
+        regions['right_shoe_cover_region'] = self._calculate_shoe_cover_region(keypoints, 'right', height, width)
         
         return regions
     
-    def _calculate_head_region(self, keypoints, height, width):
-        """헬멧 영역 계산 (코 위쪽)"""
-        nose = keypoints[0]  # [x, y, conf]
+    def _calculate_head_cover_region(self, keypoints, height, width):
+        """두건 복면 영역 계산 (머리 전체 ~ 어깨)"""
+        nose = keypoints[0]
+        left_shoulder = keypoints[5]
+        right_shoulder = keypoints[6]
         
-        if nose[2] < 0.3:  # 신뢰도가 너무 낮으면
+        # 신뢰도 체크
+        if nose[2] < 0.3:
             return None
         
-        # 머리 크기 추정 (이미지 높이의 비율)
-        head_height = height * self.mapping_config['head_offset_ratio']
-        head_width = head_height * 0.8  # 가로는 세로의 80%
+        # 머리 크기 추정 (더 크게 - 두건이 머리를 덮음)
+        head_height = height * 0.25  # 이미지 높이의 25%
+        head_width = head_height * 1.2  # 가로는 세로의 120%
         
-        x1 = max(0, nose[0] - head_width / 2)
+        # X 범위 (어깨 포함)
+        shoulder_x = []
+        if left_shoulder[2] >= 0.3:
+            shoulder_x.append(left_shoulder[0])
+        if right_shoulder[2] >= 0.3:
+            shoulder_x.append(right_shoulder[0])
+        
+        if shoulder_x:
+            x1 = max(0, min(shoulder_x) - 20)
+            x2 = min(width, max(shoulder_x) + 20)
+        else:
+            x1 = max(0, nose[0] - head_width / 2)
+            x2 = min(width, nose[0] + head_width / 2)
+        
+        # Y 범위 (머리 위 ~ 어깨)
         y1 = max(0, nose[1] - head_height)
-        x2 = min(width, nose[0] + head_width / 2)
-        y2 = nose[1]
+        
+        if shoulder_x:
+            shoulder_y = []
+            if left_shoulder[2] >= 0.3:
+                shoulder_y.append(left_shoulder[1])
+            if right_shoulder[2] >= 0.3:
+                shoulder_y.append(right_shoulder[1])
+            y2 = max(shoulder_y) if shoulder_y else nose[1] + head_height * 0.5
+        else:
+            y2 = nose[1] + head_height * 0.5
+        
+        return [x1, y1, x2, y2]
+    
+    def _calculate_goggles_region(self, keypoints, height, width):
+        """보안경 영역 계산 (눈 영역)"""
+        left_eye = keypoints[1]
+        right_eye = keypoints[2]
+        nose = keypoints[0]
+        
+        # 신뢰도 체크
+        valid_points = [p for p in [left_eye, right_eye, nose] if p[2] >= 0.3]
+        if len(valid_points) < 2:
+            return None
+        
+        # 눈 영역 크기
+        eye_height = height * 0.08  # 이미지 높이의 8%
+        eye_width = height * 0.25   # 이미지 높이의 25%
+        
+        # 중심점 (코 또는 두 눈의 중간)
+        if nose[2] >= 0.3:
+            center_x = nose[0]
+            center_y = nose[1] - eye_height * 0.5  # 코보다 약간 위
+        else:
+            center_x = np.mean([p[0] for p in valid_points])
+            center_y = np.mean([p[1] for p in valid_points])
+        
+        x1 = max(0, center_x - eye_width / 2)
+        y1 = max(0, center_y - eye_height / 2)
+        x2 = min(width, center_x + eye_width / 2)
+        y2 = min(height, center_y + eye_height / 2)
+        
+        return [x1, y1, x2, y2]
+    
+    def _calculate_mask_region(self, keypoints, height, width):
+        """마스크 영역 계산 (코/입 영역)"""
+        nose = keypoints[0]
+        
+        if nose[2] < 0.3:
+            return None
+        
+        # 마스크 크기 (코 아래)
+        mask_height = height * 0.12  # 이미지 높이의 12%
+        mask_width = height * 0.20   # 이미지 높이의 20%
+        
+        x1 = max(0, nose[0] - mask_width / 2)
+        y1 = nose[1]  # 코부터 시작
+        x2 = min(width, nose[0] + mask_width / 2)
+        y2 = min(height, nose[1] + mask_height)
+        
+        return [x1, y1, x2, y2]
+    
+    def _calculate_arm_cover_region(self, keypoints, side, width):
+        """토시 영역 계산 (팔꿈치 ~ 손목)"""
+        if side == 'left':
+            elbow = keypoints[7]
+            wrist = keypoints[9]
+        else:  # right
+            elbow = keypoints[8]
+            wrist = keypoints[10]
+        
+        # 신뢰도 체크
+        if elbow[2] < 0.3 or wrist[2] < 0.3:
+            return None
+        
+        # 팔 두께 추정
+        arm_thickness = 40  # 픽셀
+        
+        x1 = min(elbow[0], wrist[0]) - arm_thickness
+        x2 = max(elbow[0], wrist[0]) + arm_thickness
+        y1 = min(elbow[1], wrist[1])
+        y2 = max(elbow[1], wrist[1])
+        
+        x1 = max(0, x1)
+        x2 = min(width, x2)
+        
+        return [x1, y1, x2, y2]
+    
+    def _calculate_shoe_cover_region(self, keypoints, side, height, width):
+        """신발 커버 영역 계산 (발목 아래)"""
+        if side == 'left':
+            ankle = keypoints[15]
+        else:  # right
+            ankle = keypoints[16]
+        
+        if ankle[2] < 0.3:
+            return None
+        
+        # 신발 크기
+        shoe_width = 60
+        shoe_height = self.mapping_config.get('ankle_offset', 50)
+        
+        x1 = max(0, ankle[0] - shoe_width / 2)
+        x2 = min(width, ankle[0] + shoe_width / 2)
+        y1 = ankle[1]
+        y2 = min(height, ankle[1] + shoe_height)
         
         return [x1, y1, x2, y2]
     
