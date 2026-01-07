@@ -95,6 +95,40 @@ class MaskMapper:
                         mask['label'] = arm_res[0]
                         mask['label_id'] = arm_res[1]
                         mask['label_confidence'] = arm_res[2]
+                        
+            # [Refinement 2] 손목 근처의 바지(pants) 오분류 처리
+            # 손목 근처에 있는 작은 바지 조각은 실제로는 팔토시나 장갑일 확률이 높음 (또는 노이즈)
+            elif mask['label'] == 'pants' and mask['area'] < 50000:
+                l_wrist = keypoints[9]
+                r_wrist = keypoints[10]
+                centroid = np.array(mask['centroid'])
+                
+                # 손목 근처 150px 이내인지 확인
+                near_l = (l_wrist[2] > 0.3) and (np.linalg.norm(centroid - l_wrist[:2]) < 150)
+                near_r = (r_wrist[2] > 0.3) and (np.linalg.norm(centroid - r_wrist[:2]) < 150)
+                
+                if near_l or near_r:
+                    # 1. 장갑인지 재확인
+                    glove_res = self.check_gloves_by_distance(mask['centroid'], keypoints, mask['area'])
+                    if glove_res:
+                        print(f"[MaskMapper] Refined label: pants -> gloves (Near wrist, Area: {mask['area']})")
+                        mask['label'] = glove_res[0]
+                        mask['label_id'] = glove_res[1]
+                        mask['label_confidence'] = glove_res[2]
+                        continue
+                        
+                    # 2. 팔토시인지 재확인
+                    arm_res = self.check_arm_covers_by_distance(mask['centroid'], keypoints, mask['area'])
+                    if arm_res:
+                        print(f"[MaskMapper] Refined label: pants -> arm_covers (Near wrist, Area: {mask['area']})")
+                        mask['label'] = arm_res[0]
+                        mask['label_id'] = arm_res[1]
+                        mask['label_confidence'] = arm_res[2]
+                        continue
+                        
+                    # 3. 둘 다 아니면 제거 (바지가 여기 있을 순 없음)
+                    print(f"[MaskMapper] Removing suspect pants mask near wrist (Area: {mask['area']})")
+                    mask['label'] = 'unknown' # unknown은 저장 시 제외됨
 
         # 통계 출력
         label_counts = {}
@@ -274,6 +308,13 @@ class MaskMapper:
         if head_cover_result:
             return head_cover_result
         
+        # ========== [NEW] 2.5단계: 작고 모호한 객체 구제 (Nearest Keypoint) ==========
+        # Overlap 체크로 넘어가기 전에, 작은 마스크가 특정 키포인트에 매우 가깝다면(100px) 그 라벨을 따름
+        if area < 50000:
+             prox_result = self.assign_label_by_proximity(mask, keypoints)
+             if prox_result:
+                 return prox_result
+
         # ========== 3단계: 면적 기반 매핑 (상의/하의) ==========
         
         torso_result = self.check_body_by_overlap(mask, keypoints, body_regions)
@@ -468,6 +509,52 @@ class MaskMapper:
         
         return None
     
+    def assign_label_by_proximity(self, mask, keypoints):
+        """
+        작은 마스크(<50000px)에 대해 가장 가까운 키포인트 기반으로 라벨 할당.
+        Overlap 기반 매핑으로 넘어가기 전, 위치적으로 명확한(손목 등) 객체를 낚아채기 위함.
+        """
+        centroid = mask.get('centroid')
+        if centroid is None: return None
+        
+        cx, cy = centroid
+        min_dist = float('inf')
+        nearest_kp_idx = -1
+        
+        # 손목(9,10), 발목(15,16)이 가장 중요
+        # 팔꿈치(7,8)도 포함
+        target_indices = [7,8,9,10, 15,16]
+        
+        for idx in target_indices:
+            kp = keypoints[idx]
+            if kp[2] < 0.3: continue
+            
+            dist = np.sqrt((cx - kp[0])**2 + (cy - kp[1])**2)
+            if dist < min_dist:
+                min_dist = dist
+                nearest_kp_idx = idx
+        
+        # 120px보다 멀면 이 로직 적용 안함
+        if min_dist > 120:
+            return None
+            
+        # 가장 가까운 키포인트에 따라 결정
+        
+        # 1. 손목(9,10) -> 장갑 우선
+        if nearest_kp_idx in [9, 10]:
+            # 손목에 매우 가까운 작은 조각 = 장갑 소매나 장갑 본체
+            return ('gloves', 5, 0.85)
+            
+        # 2. 팔꿈치(7,8) -> 팔토시
+        elif nearest_kp_idx in [7, 8]:
+            return ('arm_covers', 6, 0.85)
+            
+        # 3. 발목(15,16) -> 신발 커버
+        elif nearest_kp_idx in [15, 16]:
+            return ('shoe_covers', 7, 0.85)
+            
+        return None
+
     def check_head_cover_by_region(self, centroid, mask, body_regions):
         """두건 복면 - 머리~어깨 영역"""
         if self.is_in_region(centroid, body_regions.get('head_cover_region')):

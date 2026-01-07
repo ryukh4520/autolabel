@@ -1,88 +1,97 @@
-# SAM Auto-Labeler
+# SAM-HQ Auto-Labeler
 
-SAM 기반 보호장비 자동 라벨링 도구 - PoC
+YOLOv8 Pose와 SAM-HQ를 결합한 고정밀 보호장비(PPE) 자동 라벨링 파이프라인입니다.
+작업자의 영상을 입력받아, 각 신체 부위 및 보호장비(안전모, 보안경, 장갑, 팔토시, 상/하의, 덧신 등)에 대한 정밀한 Segmentation Polygon 라벨을 자동으로 생성합니다.
 
-## 프로젝트 개요
+## ✨ 주요 기능
 
-작업자가 착용한 보호장비(헬멧, 장갑, 상의, 바지, 부츠)를 자동으로 검출하고 라벨링하는 도구입니다.
+- **High-Quality Segmentation**: SAM-HQ(Segment Anything Model in High Quality)를 사용하여 객체의 미세한 경계까지 포착합니다.
+- **Smart Mapping Logic**: YOLO-Pose 키포인트를 활용한 지능형 매핑 로직으로 마스크에 정확한 라벨을 부여합니다.
+    - **Proximity Voting**: 손목, 발목 등 중요 키포인트 근처의 작은 객체를 정밀하게 분류(장갑, 팔토시 등).
+    - **Refinement**: 1차 매핑 후 오분류된 객체에 대한 재검사를 통해 수정.
+- **Auto-Cleanup**: 사람 영역 외 배경 노이즈 자동 제거 (Person Segmentation 기반).
+- **Format Support**: YOLO Segmentation 포맷의 Dataset 자동 생성 (`images/`, `labels/`).
 
-### 핵심 기술
-- **SAM2**: 클래스 무관 세그멘테이션으로 익명 마스크 생성
-- **YOLO-Pose**: 신체 키포인트 검출
-- **매핑 로직**: 키포인트 근접성 기반으로 마스크에 의미 부여
+## 🚀 시작하기
 
-## 빠른 시작
+### 1. 환경 설정 (Docker)
 
-### 1. Docker 환경 구축
+Docker 및 Docker Compose가 설치되어 있어야 합니다.
 
 ```bash
-# Docker 이미지 빌드
-docker-compose build
-
-# 컨테이너 실행
+# 1. 이미지 빌드 및 컨테이너 실행
 docker-compose up -d
 
-# 컨테이너 접속
+# 2. 컨테이너 접속 (선택 사항)
+# main.py 실행을 위해 컨테이너 내부 쉘을 사용할 수 있습니다.
 docker exec -it sam_autolabel_dev /bin/bash
 ```
 
-### 2. 모델 테스트
+### 2. 데이터셋 생성 (Auto-Labeling)
+
+`main.py` 스크립트를 사용하여 비디오 파일을 데이터셋으로 변환합니다. Docker 외부(Host)에서도 `docker exec`를 통해 바로 실행 가능합니다.
 
 ```bash
-# SAM2 테스트
-python scripts/test_sam.py
+# 기본 실행 (30프레임 간격)
+docker exec sam_autolabel_dev python3 /workspace/main.py \
+    --video_path /workspace/storage/video.mp4 \
+    --output_dir /workspace/dataset_result
 
-# YOLO-Pose 테스트
-python scripts/test_pose.py
+# 옵션 적용 (300프레임 간격, 시각화 활성화, 기존 결과 덮어쓰기)
+docker exec sam_autolabel_dev python3 /workspace/main.py \
+    --video_path /workspace/test_codes/source/test_video.mp4 \
+    --output_dir /workspace/test_codes/result_main \
+    --interval 300 \
+    --visualize \
+    --overwrite
 ```
 
-### 3. 추론 실행
+**주요 옵션:**
+- `--video_path`: 입력 비디오 파일 경로 (필수)
+- `--output_dir`: 결과 데이터셋 저장 경로 (필수)
+- `--interval`: 프레임 샘플링 간격 (기본값: 30)
+- `--visualize`: 종합 시각화 이미지 생성 여부 (활성화 시 `/vis` 폴더에 저장)
+- `--conf_threshold`: 사람 검출 신뢰도 임계값 (기본값: 0.5)
+- `--overwrite`: 출력 디렉토리가 존재하면 삭제 후 재생성
 
-```bash
-# 단일 이미지 처리
-python scripts/run_inference.py --image data/input/sample.jpg
-
-# 폴더 일괄 처리
-python scripts/batch_process.py --input data/input --output data/output
-```
-
-## 프로젝트 구조
+## 📁 프로젝트 구조
 
 ```
-sam-auto-labeler/
-├── config/
-│   ├── config.yaml              # 설정 파일
-│   └── classes.yaml             # 클래스 정의
-├── src/
-│   ├── sam_segmentation.py      # SAM2 세그멘테이션
-│   ├── pose_estimation.py       # YOLO-Pose 키포인트 추출
-│   ├── mask_mapper.py           # 마스크-라벨 매핑
-│   ├── bbox_converter.py        # 마스크→바운딩박스 변환
-│   ├── label_exporter.py        # 라벨 출력
-│   ├── visualizer.py            # 시각화
-│   ├── person_filter.py         # Person 영역 필터링
-│   └── pipeline.py              # 전체 파이프라인
-├── scripts/
-│   ├── run_inference.py         # 단일 이미지 추론
-│   └── batch_process.py         # 배치 처리
-├── notebooks/
-│   └── demo.ipynb               # 데모 노트북
-├── data/
-│   ├── input/                   # 입력 이미지
-│   ├── output/                  # 생성된 라벨
-│   └── visualizations/          # 시각화 결과
-└── models/                      # 모델 체크포인트
-
+sam_autolabel/
+├── main.py                  # 메인 실행 스크립트 (Entry Point)
+├── docker-compose.yml       # Docker 환경 설정
+├── src/                     # 핵심 모듈
+│   ├── auto_labeler.py      # 전체 파이프라인 관리
+│   ├── mask_mapper.py       # 키포인트 기반 매핑 & Refinement 로직
+│   ├── samhq_segmentation.py# SAM-HQ 추론 Wrapper
+│   ├── person_segmenter.py  # YOLO-Seg 기반 사람 영역 추출
+│   ├── pose_estimation.py   # YOLO-Pose 추론 Wrapper
+│   ├── label_converter.py   # YOLO 포맷 변환기
+│   └── visualizer.py        # 결과 시각화 모듈
+├── config/                  # 설정 파일 (config.yaml)
+├── models/                  # 모델 가중치 저장소
+└── test_codes/              # 테스트 및 검증 스크립트
 ```
 
-## 출력 형식
+## 🏷️ 라벨링 클래스
 
-### YOLO 포맷 (label.txt)
+다음과 같은 클래스를 자동으로 분류합니다:
+- `head_cover` (두건/안전모)
+- `goggles` (보안경)
+- `mask` (마스크)
+- `upper_body` (상의 - 방진복)
+- `pants` (하의 - 방진복)
+- `gloves` (장갑)
+- `arm_covers` (팔토시)
+- `shoe_covers` (덧신)
+
+## ✅ 결과물 형식
+
+**YOLO Segmentation Format** (`.txt`):
 ```
-# class_id x_center y_center width height (normalized 0-1)
-0 0.512 0.156 0.089 0.112    # helmet
-1 0.234 0.534 0.045 0.067    # gloves (left)
-2 0.501 0.445 0.234 0.289    # upper_body
-3 0.498 0.734 0.198 0.356    # pants
-4 0.445 0.923 0.067 0.089    # boots (left)
+<class-id> <x1> <y1> <x2> <y2> ... <xn> <yn>
 ```
+* 모든 좌표는 0~1 사이로 정규화된 Polygon 좌표입니다.
+* `images/`: 원본 이미지 (Sampling된 프레임)
+* `labels/`: 라벨링 텍스트 파일
+* `vis/`: (옵션) 시각화 이미지

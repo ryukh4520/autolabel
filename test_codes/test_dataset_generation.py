@@ -31,7 +31,8 @@ LABEL_COLORS = {
 def parse_args():
     parser = argparse.ArgumentParser(description="Test Dataset Generation & Verification")
     parser.add_argument('--video_path', type=str, help="Path to input video")
-    parser.add_argument('--output_dir', type=str, default='test_dataset_vis', help="Directory to save results")
+    # 마운트된 볼륨 내의 절대 경로 사용 -> 호스트에서 즉시 확인 가능
+    parser.add_argument('--output_dir', type=str, default='/workspace/test_codes/result_datageneration', help="Directory to save results")
     return parser.parse_args()
 
 def process_video_generation_test():
