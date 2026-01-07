@@ -67,6 +67,9 @@ class MaskMapper:
         """
         labeled_masks = []
         
+        # 0단계: 힙 라인 기준으로 큰 마스크 분할 (상의/하의 분리)
+        masks = self.split_large_masks(masks, keypoints)
+        
         for mask in masks:
             label_name, label_id, confidence = self.assign_label(mask, keypoints, body_regions)
             
@@ -75,6 +78,112 @@ class MaskMapper:
             mask['label_confidence'] = confidence
             
             labeled_masks.append(mask)
+        
+        # 통계 출력
+        label_counts = {}
+        for mask in labeled_masks:
+            label = mask['label']
+            label_counts[label] = label_counts.get(label, 0) + 1
+        
+        print(f"[MaskMapper] Labeled {len(labeled_masks)} masks:")
+        for label, count in sorted(label_counts.items()):
+            print(f"[MaskMapper]   {label}: {count} masks")
+        
+        return labeled_masks
+            
+    def split_large_masks(self, masks, keypoints):
+        """
+        힙 라인(키포인트 11, 12) 기준으로 큰 마스크 분할
+        """
+        # 힙 키포인트 (11: left_hip, 12: right_hip)
+        l_hip = keypoints[11]
+        r_hip = keypoints[12]
+        
+        # 힙 키포인트가 유효하지 않으면 분할하지 않음
+        if l_hip[2] < 0.3 or r_hip[2] < 0.3:
+            return masks
+            
+        # 힙 라인 Y좌표 (허리선으로 간주)
+        waist_y = (l_hip[1] + r_hip[1]) / 2
+        
+        new_masks = []
+        
+        for mask in masks:
+            area = mask.get('area', 0)
+            bbox = mask.get('bbox', None)
+            
+            should_split = False
+            
+            # 면적이 충분히 크고 (예: > 30000), bbox가 유효한 경우
+            if area > 30000 and bbox:
+                x, y, w, h = bbox
+                
+                # 마스크가 waist_y 위아래로 걸쳐 있는지 확인
+                # 위쪽으로 최소 20%, 아래쪽으로 최소 20% 뻗어 있어야 함
+                if y < waist_y and (y + h) > waist_y:
+                    top_h = waist_y - y
+                    bottom_h = (y + h) - waist_y
+                    
+                    if top_h > h * 0.2 and bottom_h > h * 0.2:
+                        should_split = True
+            
+            if should_split:
+                # 마스크 분할 수행
+                seg = mask['segmentation']
+                
+                # 상체 마스크 (waist_y 위쪽)
+                upper_seg = seg.copy()
+                upper_seg[int(waist_y):, :] = False
+                
+                # 하체 마스크 (waist_y 아래쪽)
+                lower_seg = seg.copy()
+                lower_seg[:int(waist_y), :] = False
+                
+                # 유효한 분할인지 확인 (너무 작은 조각이 되면 무시)
+                upper_area = np.sum(upper_seg)
+                lower_area = np.sum(lower_seg)
+                
+                if upper_area > 1000 and lower_area > 1000:
+                    print(f"[MaskMapper] Splitting mask (area: {area}) at y={waist_y:.1f} -> Upper: {upper_area}, Lower: {lower_area}")
+                    
+                    # 상체 마스크 추가
+                    upper_mask = mask.copy()
+                    upper_mask['segmentation'] = upper_seg
+                    upper_mask['area'] = int(upper_area)
+                    upper_mask['centroid'] = self._calculate_centroid(upper_seg)
+                    upper_mask['bbox'] = self._get_bbox(upper_seg)
+                    new_masks.append(upper_mask)
+                    
+                    # 하체 마스크 추가
+                    lower_mask = mask.copy()
+                    lower_mask['segmentation'] = lower_seg
+                    lower_mask['area'] = int(lower_area)
+                    lower_mask['centroid'] = self._calculate_centroid(lower_seg)
+                    lower_mask['bbox'] = self._get_bbox(lower_seg)
+                    new_masks.append(lower_mask)
+                else:
+                    # 분할 실패 시 원본 유지
+                    new_masks.append(mask)
+            else:
+                new_masks.append(mask)
+                
+        return new_masks
+
+    def _calculate_centroid(self, segmentation):
+        """세그멘테이션 마스크의 중심점 계산"""
+        y_coords, x_coords = np.where(segmentation)
+        if len(y_coords) > 0:
+            return [float(np.mean(x_coords)), float(np.mean(y_coords))]
+        return None
+
+    def _get_bbox(self, segmentation):
+        """세그멘테이션 마스크의 Bounding Box 계산 [x, y, w, h]"""
+        y_coords, x_coords = np.where(segmentation)
+        if len(y_coords) > 0:
+            x_min, x_max = np.min(x_coords), np.max(x_coords)
+            y_min, y_max = np.min(y_coords), np.max(y_coords)
+            return [int(x_min), int(y_min), int(x_max - x_min + 1), int(y_max - y_min + 1)]
+        return [0, 0, 0, 0]
         
         # 통계 출력
         label_counts = {}
@@ -163,27 +272,46 @@ class MaskMapper:
         return ('unknown', -1, 0.0)
     
     def check_shoe_by_distance(self, centroid, keypoints, area):
-        """신발 커버 - 발목 기준 거리 매핑"""
+        """
+        신발 커버 - 무릎~발목(13-16) 관계 기반 매핑
+        제안: 무릎과 발목의 중간 지점보다 아래에 있으면 신발로 간주
+        """
         cx, cy = centroid
-        threshold = self.distance_thresholds['shoe_covers']
+        # 거리 임계값을 조금 여유 있게 적용 (부츠형 커버 고려)
+        threshold = self.distance_thresholds['shoe_covers'] * 1.5
         
-        # 왼발
-        left_ankle = keypoints[15]
-        if left_ankle[2] >= 0.3:
-            dist = np.sqrt((cx - left_ankle[0])**2 + (cy - left_ankle[1])**2)
-            # 발목보다 아래에 있고 거리가 가까우면
-            if dist <= threshold and cy >= left_ankle[1]:
-                confidence = 1 - (dist / threshold)
-                return ('shoe_covers', 7, 0.8 + 0.2 * confidence)
+        # 키포인트 인덱스
+        # 13: L.Knee, 15: L.Ankle
+        # 14: R.Knee, 16: R.Ankle
         
-        # 오른발
-        right_ankle = keypoints[16]
-        if right_ankle[2] >= 0.3:
-            dist = np.sqrt((cx - right_ankle[0])**2 + (cy - right_ankle[1])**2)
-            if dist <= threshold and cy >= right_ankle[1]:
-                confidence = 1 - (dist / threshold)
-                return ('shoe_covers', 7, 0.8 + 0.2 * confidence)
+        # 왼발 검사
+        l_knee = keypoints[13]
+        l_ankle = keypoints[15]
         
+        if l_knee[2] >= 0.3 and l_ankle[2] >= 0.3:
+            # 종아리 중간 지점 (Calf center)
+            calf_y = (l_knee[1] + l_ankle[1]) / 2
+            
+            # 마스크 중심이 종아리 중간보다 아래에 있어야 함
+            if cy > calf_y:
+                dist = np.sqrt((cx - l_ankle[0])**2 + (cy - l_ankle[1])**2)
+                if dist <= threshold:
+                    confidence = 1 - (dist / threshold)
+                    return ('shoe_covers', 7, 0.8 + 0.2 * confidence)
+        
+        # 오른발 검사
+        r_knee = keypoints[14]
+        r_ankle = keypoints[16]
+        
+        if r_knee[2] >= 0.3 and r_ankle[2] >= 0.3:
+            calf_y = (r_knee[1] + r_ankle[1]) / 2
+            
+            if cy > calf_y:
+                dist = np.sqrt((cx - r_ankle[0])**2 + (cy - r_ankle[1])**2)
+                if dist <= threshold:
+                    confidence = 1 - (dist / threshold)
+                    return ('shoe_covers', 7, 0.8 + 0.2 * confidence)
+                
         return None
     
     def check_gloves_by_distance(self, centroid, keypoints, area):

@@ -233,7 +233,7 @@ def visualize_result(result, output_path, all_masks=None, frame_num=0):
     print(f"[INFO] Visualization saved: {output_path}")
 
 
-def process_video(video_path, labeler, output_dir, frame_interval=300):
+def process_video(video_path, labeler, output_dir, frame_interval=300, single_frame=True):
     """
     동영상 처리
     
@@ -308,6 +308,9 @@ def process_video(video_path, labeler, output_dir, frame_interval=300):
                 import traceback
                 traceback.print_exc()
         
+        if single_frame:
+            break
+
         frame_count += 1
     
     cap.release()
