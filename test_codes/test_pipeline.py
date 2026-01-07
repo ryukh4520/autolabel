@@ -390,7 +390,7 @@ def main():
     
     # 동영상 처리
     print("\n[INFO] Processing video...")
-    process_video(video_path, labeler, output_dir, frame_interval=300)
+    process_video(video_path, labeler, output_dir, frame_interval=300, single_frame=False)
     
     # VRAM 사용량
     vram = labeler.get_vram_usage()

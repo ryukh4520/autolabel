@@ -315,74 +315,101 @@ class MaskMapper:
         return None
     
     def check_gloves_by_distance(self, centroid, keypoints, area):
-        """장갑 - 손목 기준 거리 매핑"""
+        """
+        장갑 - 벡터 기반 매핑 (손목 너머에 위치)
+        """
+        # 장갑은 보통 작은 마스크 (면적 60000px 이하로 완화)
+        if area > 60000:
+            return None
+            
         cx, cy = centroid
         threshold = self.distance_thresholds['gloves']
         
-        # 장갑은 보통 작은 마스크 (면적 50000px 이하)
-        if area > 50000:
-            return None
-        
-        # 왼손
-        left_wrist = keypoints[9]
-        if left_wrist[2] >= 0.3:
-            dist = np.sqrt((cx - left_wrist[0])**2 + (cy - left_wrist[1])**2)
+        # 왼손 (팔꿈치 -> 손목 벡터)
+        l_elbow = keypoints[7][:2]
+        l_wrist = keypoints[9][:2]
+        if keypoints[7][2] > 0.3 and keypoints[9][2] > 0.3:
+            dist = np.sqrt((cx - l_wrist[0])**2 + (cy - l_wrist[1])**2)
             if dist <= threshold:
-                confidence = 1 - (dist / threshold)
-                return ('gloves', 5, 0.85 + 0.15 * confidence)
-        
+                # 벡터 투영 (t > 0.9 이면 손목 근처나 그 너머)
+                t = self._project_point_on_line(centroid, l_elbow, l_wrist)
+                if t > 0.85:
+                    return ('gloves', 5, 0.9)
+
         # 오른손
-        right_wrist = keypoints[10]
-        if right_wrist[2] >= 0.3:
-            dist = np.sqrt((cx - right_wrist[0])**2 + (cy - right_wrist[1])**2)
+        r_elbow = keypoints[8][:2]
+        r_wrist = keypoints[10][:2]
+        if keypoints[8][2] > 0.3 and keypoints[10][2] > 0.3:
+            dist = np.sqrt((cx - r_wrist[0])**2 + (cy - r_wrist[1])**2)
             if dist <= threshold:
-                confidence = 1 - (dist / threshold)
-                return ('gloves', 5, 0.85 + 0.15 * confidence)
+                t = self._project_point_on_line(centroid, r_elbow, r_wrist)
+                if t > 0.85:
+                    return ('gloves', 5, 0.9)
         
         return None
     
     def check_arm_covers_by_distance(self, centroid, keypoints, area):
-        """토시 - 팔꿈치~손목 사이 거리 매핑"""
+        """
+        토시 - 벡터 기반 매핑 (팔꿈치와 손목 사이)
+        """
+        # 토시도 비교적 작은 마스크
+        if area > 100000:
+            return None
+            
         cx, cy = centroid
         threshold = self.distance_thresholds['arm_covers']
         
-        # 토시도 비교적 작은 마스크 (면적 100000px 이하)
-        if area > 100000:
-            return None
-        
-        # 왼팔 (팔꿈치~손목 중간점)
-        left_elbow = keypoints[7]
-        left_wrist = keypoints[9]
-        if left_elbow[2] >= 0.3 and left_wrist[2] >= 0.3:
-            # 팔꿈치~손목 중간점
-            mid_x = (left_elbow[0] + left_wrist[0]) / 2
-            mid_y = (left_elbow[1] + left_wrist[1]) / 2
-            dist = np.sqrt((cx - mid_x)**2 + (cy - mid_y)**2)
+        # 왼팔
+        l_elbow = keypoints[7][:2]
+        l_wrist = keypoints[9][:2]
+        if keypoints[7][2] > 0.3 and keypoints[9][2] > 0.3:
+            # 거리 체크 (팔꿈치~손목 중간점 기준 안씀, 선분과의 거리로 변경 가능하나 일단 유지)
+            # 여기서는 벡터 투영 비율이 핵심
+            t = self._project_point_on_line(centroid, l_elbow, l_wrist)
             
-            # 팔꿈치 근처이면서 손목보다 떨어져 있으면 토시
-            elbow_dist = np.sqrt((cx - left_elbow[0])**2 + (cy - left_elbow[1])**2)
-            wrist_dist = np.sqrt((cx - left_wrist[0])**2 + (cy - left_wrist[1])**2)
-            
-            if dist <= threshold and elbow_dist < wrist_dist:
-                confidence = 1 - (dist / threshold)
-                return ('arm_covers', 6, 0.75 + 0.25 * confidence)
+            # 팔꿈치(0.0) ~ 손목(1.0) 사이의 20% ~ 90% 구간
+            if 0.15 < t <= 0.85:
+                # 선분과의 수직 거리 체크 (너무 멀리 떨어진 오검출 방지)
+                # 간략히 손목이나 팔꿈치 중 하나랑은 거리가 threshold 이내여야 함
+                dist_w = np.sqrt((cx - l_wrist[0])**2 + (cy - l_wrist[1])**2)
+                dist_e = np.sqrt((cx - l_elbow[0])**2 + (cy - l_elbow[1])**2)
+                
+                if dist_w <= threshold or dist_e <= threshold:
+                    # 손목에 가까울수록(t가 0.85에 가까울수록) 토시 확률 높음
+                    return ('arm_covers', 6, 0.8)
         
         # 오른팔
-        right_elbow = keypoints[8]
-        right_wrist = keypoints[10]
-        if right_elbow[2] >= 0.3 and right_wrist[2] >= 0.3:
-            mid_x = (right_elbow[0] + right_wrist[0]) / 2
-            mid_y = (right_elbow[1] + right_wrist[1]) / 2
-            dist = np.sqrt((cx - mid_x)**2 + (cy - mid_y)**2)
+        r_elbow = keypoints[8][:2]
+        r_wrist = keypoints[10][:2]
+        if keypoints[8][2] > 0.3 and keypoints[10][2] > 0.3:
+            t = self._project_point_on_line(centroid, r_elbow, r_wrist)
             
-            elbow_dist = np.sqrt((cx - right_elbow[0])**2 + (cy - right_elbow[1])**2)
-            wrist_dist = np.sqrt((cx - right_wrist[0])**2 + (cy - right_wrist[1])**2)
-            
-            if dist <= threshold and elbow_dist < wrist_dist:
-                confidence = 1 - (dist / threshold)
-                return ('arm_covers', 6, 0.75 + 0.25 * confidence)
+            if 0.15 < t <= 0.85:
+                dist_w = np.sqrt((cx - r_wrist[0])**2 + (cy - r_wrist[1])**2)
+                dist_e = np.sqrt((cx - r_elbow[0])**2 + (cy - r_elbow[1])**2)
+                
+                if dist_w <= threshold or dist_e <= threshold:
+                    return ('arm_covers', 6, 0.8)
         
         return None
+
+    def _project_point_on_line(self, point, line_start, line_end):
+        """
+        점을 선분에 투영하여 위치 비율 반환
+        return t:
+          t < 0: start 이전
+          0 <= t <= 1: 선분 위
+          t > 1: end 이후
+        """
+        line_vec = np.array(line_end) - np.array(line_start)
+        point_vec = np.array(point) - np.array(line_start)
+        
+        line_len_sq = np.dot(line_vec, line_vec)
+        if line_len_sq == 0:
+            return 0.0
+            
+        t = np.dot(point_vec, line_vec) / line_len_sq
+        return t
     
     def check_goggles_by_region(self, centroid, mask, keypoints, body_regions):
         """보안경 - 눈 영역 + 거리"""
