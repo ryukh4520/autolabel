@@ -60,3 +60,8 @@ Thumbs.db
 test_codes/result*
 test_codes/source*
 plan_n_process/
+
+# Markdown files
+*.md
+!README.md
+!**/README.md
