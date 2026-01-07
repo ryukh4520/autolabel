@@ -78,7 +78,24 @@ class MaskMapper:
             mask['label_confidence'] = confidence
             
             labeled_masks.append(mask)
-        
+            
+        # [Refinement] 라벨 재검증 (오분류 수정)
+        # 1. upper_body로 분류된 마스크 중, 팔 벡터에 가깝고 크기가 작으면 arm_covers로 변경
+        for mask in labeled_masks:
+            if mask['label'] == 'upper_body':
+                # 면적이 80000 이하면 의심 (상체 전체는 보통 20만 이상)
+                if mask['area'] < 80000:
+                    # check_arm_covers_by_distance 호출
+                    # (이미 상체 내부에 있음이 보장되므로, 팔 벡터 근처이기만 하면 됨)
+                    arm_res = self.check_arm_covers_by_distance(mask['centroid'], keypoints, mask['area'])
+                    # check_arm_covers_by_distance 내부에서 area 체크(100000이하)도 하므로 안전
+                    
+                    if arm_res:
+                        print(f"[MaskMapper] Refined label: upper_body -> arm_covers (Area: {mask['area']})")
+                        mask['label'] = arm_res[0]
+                        mask['label_id'] = arm_res[1]
+                        mask['label_confidence'] = arm_res[2]
+
         # 통계 출력
         label_counts = {}
         for mask in labeled_masks:

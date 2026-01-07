@@ -125,6 +125,72 @@ class SAMHQSegmenter:
             masks = self.mask_generator.generate(image)
             print(f"[SAMHQSegmenter] Generated {len(masks)} masks")
             return masks
+
+    def generate_masks_from_crop(self, image, crop_box):
+        """
+        BBox로 잘린(Crop) 이미지 영역에 대해 마스크를 생성하고,
+        다시 원본 이미지 좌표계로 복원하여 반환함.
+        
+        Args:
+            image (np.ndarray): 원본 전체 이미지
+            crop_box (tuple): (x, y, w, h) 형태의 Crop 영역
+            
+        Returns:
+            list: 원본 좌표계로 변환된 마스크 리스트
+        """
+        x, y, w, h = crop_box
+        orig_h, orig_w = image.shape[:2]
+        
+        # 1. 안전한 Crop (범위 체크)
+        x = max(0, int(x))
+        y = max(0, int(y))
+        w = min(int(w), orig_w - x)
+        h = min(int(h), orig_h - y)
+        
+        if w <= 0 or h <= 0:
+            return []
+            
+        crop_img = image[y:y+h, x:x+w]
+        
+        # 2. 마스크 생성 (Crop된 작은 이미지 기준)
+        # 여기서 생성된 마스크 좌표는 (0,0) ~ (w,h) 기준임
+        print(f"[SAMHQSegmenter] Generating masks from crop: {w}x{h}")
+        masks = self.mask_generator.generate(crop_img)
+        
+        # 3. 좌표 및 마스크 복원 (원본 좌표계로)
+        restored_masks = []
+        for mask in masks:
+            # (1) Segmentation 복원
+            # 원본 크기의 빈 캔버스 생성
+            full_mask = np.zeros((orig_h, orig_w), dtype=bool)
+            # 해당 위치에 붙여넣기
+            full_mask[y:y+h, x:x+w] = mask['segmentation']
+            mask['segmentation'] = full_mask
+            
+            # (2) BBox 복원
+            bx, by, bw, bh = mask['bbox']
+            mask['bbox'] = [bx + x, by + y, bw, bh]
+            
+            # (3) Point Coords 복원 (crop_nms_thresh 등에서 사용)
+            if 'point_coords' in mask:
+                if isinstance(mask['point_coords'], list):
+                    coords = np.array(mask['point_coords'])
+                    coords[:, 0] += x
+                    coords[:, 1] += y
+                    mask['point_coords'] = coords.tolist()
+                elif isinstance(mask['point_coords'], np.ndarray):
+                    mask['point_coords'][:, 0] += x
+                    mask['point_coords'][:, 1] += y
+                    
+            # (4) Crop Box 정보 추가 (디버깅용)
+            mask['crop_box'] = [x, y, w, h]
+            
+            restored_masks.append(mask)
+            
+        # 4. 필터링 (너무 작거나 큰 노이즈는 제거)
+        filtered = self.filter_masks(restored_masks, (orig_h, orig_w))
+        
+        return filtered
     
     def filter_masks(self, masks, image_shape, min_area=None, max_area_ratio=None):
         """

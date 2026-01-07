@@ -5,18 +5,33 @@ import cv2
 import numpy as np
 import argparse
 import glob
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
-# 프로젝트 루트 경로 추가 (모듈 import를 위함)
+# 프로젝트 루트 경로 추가
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
 from src.auto_labeler import AutoLabeler
 from src.label_converter import LabelConverter
 
+# 시각화용 색상 정의 (RGB)
+LABEL_COLORS = {
+    'head_cover': [255, 0, 0],       # Red
+    'goggles': [0, 255, 0],          # Green
+    'mask': [0, 0, 255],             # Blue
+    'upper_body': [255, 255, 0],     # Yellow
+    'pants': [255, 0, 255],          # Magenta
+    'gloves': [0, 255, 255],         # Cyan
+    'arm_covers': [255, 165, 0],     # Orange
+    'shoe_covers': [128, 0, 128],    # Purple
+    'unknown': [128, 128, 128]       # Gray
+}
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="Test Dataset Generation Pipeline")
+    parser = argparse.ArgumentParser(description="Test Dataset Generation & Verification")
     parser.add_argument('--video_path', type=str, help="Path to input video")
-    parser.add_argument('--output_dir', type=str, default='test_yolo_output', help="Directory to save test results")
+    parser.add_argument('--output_dir', type=str, default='test_dataset_vis', help="Directory to save results")
     return parser.parse_args()
 
 def process_video_generation_test():
@@ -25,48 +40,45 @@ def process_video_generation_test():
     # 1. 비디오 경로 확인
     video_path = args.video_path
     if not video_path:
-        mp4_files = glob.glob(os.path.join(project_root, '*.mp4'))
-        if mp4_files:
-            video_path = mp4_files[0]
-        else:
-            default_path = '/workspace/storage/videos/match2.mp4'
-            if os.path.exists(default_path):
-                video_path = default_path
-            else:
-                mp4_files = glob.glob('*.mp4')
-                if mp4_files:
-                    video_path = mp4_files[0]
+        # 자동 탐색
+        search_paths = [
+            os.path.join(project_root, '*.mp4'),
+            '/workspace/storage/videos/match2.mp4',
+            '/workspace/test_codes/source/test_video.mp4',
+            '*.mp4'
+        ]
+        for path in search_paths:
+            found = glob.glob(path)
+            if found:
+                video_path = found[0]
+                break
 
     if not video_path or not os.path.exists(video_path):
-        print("[ERROR] Could not find any input video. Please specify --video_path")
+        print("[ERROR] No input video found. Please specify --video_path")
         return
     
     os.makedirs(args.output_dir, exist_ok=True)
-    print(f"[TEST] Output Directory: {args.output_dir}")
-    print(f"[TEST] Using video: {video_path}")
+    print(f"[INFO] Video: {video_path}")
+    print(f"[INFO] Output: {args.output_dir}")
     
     # 2. 모델 초기화
-    print("\n[TEST] 1. Initializing models...")
-    
+    print("\n[INFO] Initializing models...")
     try:
-        # AutoLabeler는 내부적으로 config.yaml을 로드하여 모델 경로를 결정함
-        labeler = AutoLabeler() 
+        labeler = AutoLabeler()
         converter = LabelConverter()
     except Exception as e:
-        print(f"[ERROR] Model initialization failed: {e}")
+        print(f"[ERROR] Init failed: {e}")
         return
     
-    # 3. 비디오 처리 루프
+    # 3. 비디오 루프
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    
-    print(f"[TEST] Video info: {total_frames} frames, {fps:.2f} FPS")
-    print("\n[TEST] 2. Starting video processing (Interval: 300 frames)...")
     
     frame_interval = 300
     frame_count = 0
     processed_count = 0
+    
+    print("\n[INFO] Starting pipeline visualization test...")
     
     while True:
         ret, frame = cap.read()
@@ -74,86 +86,201 @@ def process_video_generation_test():
             break
             
         if frame_count % frame_interval == 0:
-            print(f"\n[{processed_count+1}] Processing Frame {frame_count}/{total_frames}...")
+            print(f"\n[Frame {frame_count}] Processing...")
             
-            # (1) 샘플 이미지 저장 (AutoLabeler 입력용)
-            img_height, img_width = frame.shape[:2]
-            sample_img_path = os.path.join(args.output_dir, f'frame_{frame_count:06d}.jpg')
-            cv2.imwrite(sample_img_path, frame)
+            # (1) 임시 이미지 저장
+            temp_img_path = os.path.join(args.output_dir, f'temp_frame_{frame_count}.jpg')
+            cv2.imwrite(temp_img_path, frame)
+            img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            height, width = frame.shape[:2]
             
-            # (2) 파이프라인 실행
-            result = labeler.process_image(sample_img_path, verbose=False) # verbose 끔
+            # (2) SAM-HQ Raw Mask 생성 (시각화용)
+            # 전체 마스크 시각화를 위해 따로 생성 (AutoLabeler 내부 로직과 독립적 확인)
+            print("    - Generating SAM-HQ raw masks...")
+            sam_input = labeler.load_image(temp_img_path)
+            all_masks = labeler.sam_segmenter.generate_masks(sam_input)
+            
+            # (3) Auto-Labeling Pipeline 실행
+            print("    - Running auto-labeling pipeline...")
+            result = labeler.process_image(temp_img_path, verbose=False)
             labeled_masks = result.get('labeled_masks', [])
-            print(f"    - Generated {len(labeled_masks)} labeled masks")
+            person_info = result.get('person_info', {})
             
-            # (3) YOLO 포맷 변환 및 저장
-            sample_txt_path = os.path.join(args.output_dir, f'frame_{frame_count:06d}.txt')
-            num_polygons = converter.save_yolo_label(labeled_masks, sample_txt_path, img_width, img_height)
-            print(f"    - Saved {num_polygons} polygons to .txt")
+            # (4) YOLO 포맷 변환 및 저장
+            label_txt_path = os.path.join(args.output_dir, f'frame_{frame_count:06d}.txt')
+            converter.save_yolo_label(labeled_masks, label_txt_path, width, height)
+            print(f"    - Saved label: {label_txt_path}")
             
-            # (4) 검증 (시각화)
-            print("    - Verifying...")
-            verify_img_path = os.path.join(args.output_dir, f'frame_{frame_count:06d}_verified.png')
-            verify_yolo_label_and_save(sample_img_path, sample_txt_path, verify_img_path, labeler.mask_mapper.label_names)
+            # (5) 종합 시각화 및 저장
+            vis_save_path = os.path.join(args.output_dir, f'frame_{frame_count:06d}_comprehensive.png')
+            print("    - Creating comprehensive visualization...")
+            visualize_comprehensive_result(
+                img_rgb, 
+                person_info, 
+                all_masks, 
+                labeled_masks, 
+                label_txt_path, 
+                vis_save_path,
+                labeler.mask_mapper.label_names
+            )
             
             processed_count += 1
             
+            # 임시 파일 삭제
+            if os.path.exists(temp_img_path):
+                os.remove(temp_img_path)
+                
         frame_count += 1
         
     cap.release()
-    print(f"\n[SUCCESS] Test pipeline complete! Processed {processed_count} frames.")
-    print(f"Check the output directory: {args.output_dir}")
+    print("\n[SUCCESS] Pipeline Test Complete!")
 
-def verify_yolo_label_and_save(img_path, txt_path, save_path, label_names):
-    # 기존 verify_yolo_label 함수를 재활용하되 저장 경로를 인자로 받도록 수정
-    img = cv2.imread(img_path)
-    if img is None: return
-
-    height, width = img.shape[:2]
-    if not os.path.exists(txt_path): return
-
-    with open(txt_path, 'r') as f:
-        lines = f.readlines()
-        
-    # 색상 팔레트 (클래스별 고정 색상 사용 권장하지만 여기선 랜덤)
-    np.random.seed(42)
-    colors = np.random.randint(0, 255, (20, 3), dtype=np.uint8).tolist()
+def visualize_comprehensive_result(image, person_info, all_masks, labeled_masks, label_txt_path, output_path, label_mapping):
+    """
+    5단계 종합 시각화
+    Grid 2x3:
+    1. Original      2. Pose Detection     3. SAM-HQ (Raw)
+    4. Labeled Masks 5. Final Dataset Verify 6. Statistics
+    """
+    fig, axes = plt.subplots(2, 3, figsize=(24, 16))
     
-    overlay = img.copy()
+    # 1. Original
+    axes[0, 0].imshow(image)
+    axes[0, 0].set_title('1. Original Image', fontsize=14, fontweight='bold')
+    axes[0, 0].axis('off')
     
-    for line in lines:
-        parts = list(map(float, line.strip().split()))
-        class_id = int(parts[0])
-        coords = parts[1:]
+    # 2. Pose Detection
+    axes[0, 1].imshow(image)
+    if person_info:
+        bbox = person_info.get('bbox', [0, 0, 0, 0])
+        rect = Rectangle((bbox[0], bbox[1]), bbox[2]-bbox[0], bbox[3]-bbox[1],
+                         fill=False, edgecolor='red', linewidth=2)
+        axes[0, 1].add_patch(rect)
         
-        points = []
-        for i in range(0, len(coords), 2):
-            x = int(coords[i] * width)
-            y = int(coords[i+1] * height)
-            points.append([x, y])
+        # Keypoints
+        kpts = person_info.get('keypoints', [])
+        # Skeleton 연결 정보 (간략화)
+        skeleton = [[5,7],[7,9],[6,8],[8,10],[11,13],[13,15],[12,14],[14,16],[5,6],[11,12],[5,11],[6,12]]
+        
+        # Draw skeleton
+        kpts_np = np.array(kpts)
+        if len(kpts_np) > 0:
+            for p1, p2 in skeleton:
+                if p1 < len(kpts_np) and p2 < len(kpts_np) and kpts_np[p1][2] > 0.3 and kpts_np[p2][2] > 0.3:
+                    x = [kpts_np[p1][0], kpts_np[p2][0]]
+                    y = [kpts_np[p1][1], kpts_np[p2][1]]
+                    axes[0, 1].plot(x, y, 'g-', linewidth=2)
+                    
+            # Draw points
+            for kp in kpts:
+                if kp[2] > 0.3:
+                    axes[0, 1].plot(kp[0], kp[1], 'ro', markersize=4)
+                
+    axes[0, 1].set_title('2. YOLO-Pose', fontsize=14, fontweight='bold')
+    axes[0, 1].axis('off')
+    
+    # 3. SAM-HQ Raw
+    axes[0, 2].imshow(image)
+    if len(all_masks) > 0:
+        sorted_anns = sorted(all_masks, key=(lambda x: x['area']), reverse=True)
+        
+        # 마스크 오버레이 생성
+        img_h, img_w = image.shape[:2]
+        mask_overlay = np.ones((img_h, img_w, 4))
+        mask_overlay[:,:,3] = 0
+        
+        for ann in sorted_anns:
+            m = ann['segmentation']
+            color_mask = np.concatenate([np.random.random(3), [0.45]])
+            mask_overlay[m] = color_mask
             
-        pts = np.array(points, np.int32)
-        pts = pts.reshape((-1, 1, 2))
+        axes[0, 2].imshow(mask_overlay)
         
-        color = [int(c) for c in colors[class_id % len(colors)]]
-        
-        cv2.fillPoly(overlay, [pts], color)
-        cv2.polylines(img, [pts], isClosed=True, color=color, thickness=2)
-        
-        label_text = label_names.get(class_id, str(class_id))
-        
-        text_pos = (points[0][0], points[0][1]-10)
-        # 텍스트가 화면 밖으로 나가는 것 방지
-        text_pos = (max(0, text_pos[0]), max(20, text_pos[1]))
-        
-        (tw, th), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-        cv2.rectangle(img, (text_pos[0], text_pos[1] - th - 5), (text_pos[0] + tw, text_pos[1] + 5), color, -1)
-        cv2.putText(img, label_text, text_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.6, [255, 255, 255], 2)
+    axes[0, 2].set_title(f'3. SAM-HQ Raw ({len(all_masks)} masks)', fontsize=14, fontweight='bold')
+    axes[0, 2].axis('off')
     
-    alpha = 0.4
-    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+    # 4. Labeled Results
+    # 마스크 색상 적용
+    mask_img = image.copy()
+    overlay_img = np.zeros_like(image)
     
-    cv2.imwrite(save_path, img)
+    for mask in labeled_masks:
+        label = mask.get('label', 'unknown')
+        color = LABEL_COLORS.get(label, [128, 128, 128]) # RGB List
+        
+        seg = mask['segmentation']
+        overlay_img[seg] = color
+        
+    # 합성
+    mask_vis = cv2.addWeighted(mask_img, 0.6, overlay_img, 0.4, 0)
+    axes[1, 0].imshow(mask_vis)
+    axes[1, 0].set_title(f'4. Auto-Labeling Result ({len(labeled_masks)} labeled)', fontsize=14, fontweight='bold')
+    axes[1, 0].axis('off')
+    
+    # 5. Final Dataset Verification (Load from .txt)
+    axes[1, 1].imshow(image)
+    
+    if os.path.exists(label_txt_path):
+        with open(label_txt_path, 'r') as f:
+            lines = f.readlines()
+            
+        h, w = image.shape[:2]
+        for line in lines:
+            parts = list(map(float, line.strip().split()))
+            if not parts: continue
+            cls_id = int(parts[0])
+            coords = parts[1:]
+            
+            # Polygon 좌표 복원
+            poly_points = []
+            for i in range(0, len(coords), 2):
+                px = coords[i] * w
+                py = coords[i+1] * h
+                poly_points.append([px, py])
+            
+            if len(poly_points) > 2:
+                poly_np = np.array(poly_points)
+                
+                # Draw Polygon
+                poly_patch = plt.Polygon(poly_np, fill=False, edgecolor='cyan', linewidth=2)
+                axes[1, 1].add_patch(poly_patch)
+                
+                # Label Text
+                label_name = label_mapping.get(cls_id, str(cls_id))
+                axes[1, 1].text(poly_points[0][0], poly_points[0][1], label_name, 
+                               color='white', fontsize=10, fontweight='bold',
+                               bbox=dict(facecolor='black', alpha=0.5, edgecolor='none'))
+            
+    axes[1, 1].set_title('5. Final Dataset (Loaded from .txt)', fontsize=14, fontweight='bold')
+    axes[1, 1].axis('off')
+    
+    # 6. Statistics / Legend
+    axes[1, 2].axis('off')
+    
+    # 통계 텍스트 작성
+    stats_text = "Label Statistics:\n"
+    stats_text += "-" * 30 + "\n"
+    
+    label_counts = {}
+    for mask in labeled_masks:
+        l = mask.get('label', 'unknown')
+        label_counts[l] = label_counts.get(l, 0) + 1
+        
+    for label, count in sorted(label_counts.items()):
+        stats_text += f"\u2022 {label}: {count}\n"
+        
+    stats_text += "\n\nFiles Generated:\n"
+    stats_text += "-" * 30 + "\n"
+    stats_text += f"Label: {os.path.basename(label_txt_path)}\n"
+    stats_text += f"Polygons: {len(label_counts)}"
+    
+    axes[1, 2].text(0.1, 0.9, stats_text, fontsize=12, verticalalignment='top', fontfamily='monospace')
+    
+    # 저장
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=100)
+    plt.close()
+    print(f"    - Vis saved: {output_path}")
 
 if __name__ == "__main__":
     process_video_generation_test()

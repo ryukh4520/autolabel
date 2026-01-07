@@ -177,11 +177,11 @@ class AutoLabeler:
                 print(f"           Mask area: {np.sum(person_mask)} px ({np.sum(person_mask)/(image.shape[0]*image.shape[1])*100:.1f}%)")
                 print(f"           Time: {seg_time:.3f}s")
         
-        # 3. SAM-HQ (person_mask 사용!)
+        # 3. SAM-HQ (Standard Process using Person Mask)
         start_time = time.time()
         masks = self.sam_segmenter.process(
             image,
-            person_mask=person_mask,  # 사람 마스크 전달!
+            person_mask=person_mask,
             filter_masks=True,
             calculate_centroids=True
         )
