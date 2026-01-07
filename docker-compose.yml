@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  sam-autolabel:
+    build: .
+    image: sam-autolabel:latest
+    container_name: sam_autolabel_dev
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ./src:/workspace/src
+      - ./config:/workspace/config
+      - ./notebooks:/workspace/notebooks
+      - ./scripts:/workspace/scripts
+      - ./data:/workspace/data
+      - ./models:/workspace/models
+      - ./plan_n_process:/workspace/plan_n_process
+      - ./test_codes:/workspace/test_codes
+    ports:
+      - "8889:8888"  # Jupyter
+    shm_size: '8gb'
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    command: /bin/bash

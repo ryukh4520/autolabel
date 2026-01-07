@@ -1,0 +1,8 @@
+names:
+  0: helmet
+  1: gloves
+  2: upper_body
+  3: pants
+  4: boots
+
+nc: 5  # number of classes

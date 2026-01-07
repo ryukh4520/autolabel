@@ -1,0 +1,48 @@
+# Model settings
+sam:
+  model_type: "sam2_hiera_large"
+  checkpoint: "/workspace/models/sam2_hiera_large.pt"
+  device: "cuda"
+  points_per_side: 32  # Grid points for automatic mask generation
+  pred_iou_thresh: 0.88  # Mask quality threshold
+  stability_score_thresh: 0.95  # Stability threshold
+  
+pose:
+  model: "/workspace/models/yolov8m-pose.pt"
+  device: "cuda"
+  conf_threshold: 0.5  # Confidence threshold for person detection
+  iou_threshold: 0.7   # NMS IoU threshold
+
+# Mask filtering
+mask_filter:
+  min_area: 500           # Minimum mask area in pixels
+  max_area_ratio: 0.5     # Maximum mask area as ratio of image
+  person_overlap_threshold: 0.3  # Minimum overlap with person bbox
+
+# Keypoint mapping thresholds
+mapping:
+  head_offset_ratio: 0.15  # Ratio above nose for helmet detection
+  hand_radius: 60          # Pixel radius around wrist for gloves
+  torso_expand_ratio: 0.1  # Expansion ratio for torso region
+  ankle_offset: 30         # Pixel offset below ankle for boots
+  
+# Equipment labels
+labels:
+  helmet: 0
+  gloves: 1
+  upper_body: 2
+  pants: 3
+  boots: 4
+
+# Output settings
+output:
+  format: "yolo"          # "yolo" or "coco"
+  save_visualization: true
+  visualization_alpha: 0.5
+  line_thickness: 2
+  font_scale: 0.6
+
+# Processing settings
+processing:
+  max_image_size: 1280    # Resize images larger than this
+  batch_size: 1           # Process one image at a time for PoC
