@@ -38,6 +38,7 @@ ENV/
 models/*.pt
 models/*.pth
 models/*.onnx
+!models/.gitkeep
 
 # Data files
 data/input/*

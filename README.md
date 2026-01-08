@@ -12,6 +12,45 @@ YOLOv8 Pose와 SAM-HQ를 결합한 고정밀 보호장비(PPE) 자동 라벨링 
 - **Auto-Cleanup**: 사람 영역 외 배경 노이즈 자동 제거 (Person Segmentation 기반).
 - **Format Support**: YOLO Segmentation 포맷의 Dataset 자동 생성 (`images/`, `labels/`).
 
+## 📦 모델 준비
+
+이 프로젝트는 다음 3개의 사전 학습된 모델을 사용합니다:
+
+### 필수 모델
+
+1. **SAM-HQ (ViT-B)** - 고품질 세그멘테이션
+   - 파일명: `sam_hq_vit_b.pth`
+   - 다운로드: [SAM-HQ GitHub Releases](https://github.com/SysCV/sam-hq/releases)
+   - 경로: `models/sam_hq_vit_b.pth`
+
+2. **YOLOv8s-seg** - 사람 영역 세그멘테이션
+   - 파일명: `yolov8s-seg.pt`
+   - 다운로드: [Ultralytics YOLOv8](https://github.com/ultralytics/assets/releases)
+   - 경로: `models/yolov8s-seg.pt`
+
+3. **YOLOv8m-pose** - 포즈 추정
+   - 파일명: `yolov8m-pose.pt`
+   - 다운로드: [Ultralytics YOLOv8](https://github.com/ultralytics/assets/releases)
+   - 경로: `models/yolov8m-pose.pt`
+
+### 설치 방법
+
+```bash
+# 1. models 디렉토리 생성 (이미 존재하는 경우 생략)
+mkdir -p models
+
+# 2. SAM-HQ 모델 다운로드
+wget -O models/sam_hq_vit_b.pth https://huggingface.co/lkeab/hq-sam/resolve/main/sam_hq_vit_b.pth
+
+# 3. YOLOv8 모델 다운로드 (Python 환경에서)
+pip install ultralytics
+python -c "from ultralytics import YOLO; YOLO('yolov8s-seg.pt'); YOLO('yolov8m-pose.pt')"
+mv yolov8s-seg.pt models/
+mv yolov8m-pose.pt models/
+```
+
+> **⚠️ 중요**: 모델 파일은 용량이 크기 때문에 GitHub 저장소에 포함되어 있지 않습니다. 위 명령어를 사용하여 **반드시 모델을 다운로드**한 후 프로젝트를 실행하세요.
+
 ## 🚀 시작하기
 
 ### 1. 환경 설정 (Docker)
